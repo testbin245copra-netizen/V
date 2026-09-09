@@ -1,0 +1,15 @@
+[project]
+name = "shopify-checker"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "curl_cffi",
+    "psutil",
+    "httpx",
+    "aiohttp",
+    "asyncio",
+    "python-multipart",
+    "uvloop"
+]
