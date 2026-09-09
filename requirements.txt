@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+curl_cffi
+psutil
+httpx
+aiohttp
+asyncio
+python-multipart
+uvloop
