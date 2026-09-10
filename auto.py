@@ -24,7 +24,11 @@ from curl_cffi.requests import Session, BrowserType
 
 SITE_TXT = Path(__file__).parent / "site.txt"
 WORKING_SITES_API = "https://apok-production.up.railway.app/sites/working"
-MAX_SITE_AMOUNT = 20.0
+MAX_SITE_AMOUNT = 30.0          # ✅ كان 15.0
+
+# ✅ حدود السعر للمنتج
+MIN_PRODUCT_PRICE = 0.01
+MAX_PRODUCT_PRICE = 30.0
 
 BROWSER_PROFILES = ["chrome124", "chrome120", "chrome116", "edge101", "safari15_5"]
 
@@ -208,11 +212,11 @@ def choose_affordable_site(api_url: str, max_amount: float) -> "WorkingSite":
     return random.choice(sites)
 
 def fetch_affordable_sites(api_url: str, max_amount: float) -> List["WorkingSite"]:
-    page_size = 250          # ✅ زودنا من 100 لـ 250
+    page_size = 250          # ✅ كان 100
     out: List[WorkingSite] = []
     seen: set = set()
     offset = 0
-    MAX_PAGES = 100          # ✅ زودنا من 20 لـ 100  → 250 * 100 = 25000 موقع
+    MAX_PAGES = 100          # ✅ كان 20
 
     for _ in range(MAX_PAGES):
         page_url = f"{api_url}?limit={page_size}&offset={offset}"
@@ -255,6 +259,8 @@ def fetch_affordable_sites(api_url: str, max_amount: float) -> List["WorkingSite
 
     if not out:
         raise Exception("no affordable sites found in API payload")
+
+    pass  # removed print
     return out
 
 def parse_dashboard_html_sites(html_body: str, max_amount: float) -> List["WorkingSite"]:
@@ -319,34 +325,59 @@ def to_float(v: Any) -> Tuple[float, bool]:
 
 # ──────────────────────── Step 0: cheapest product ───────────────────
 
-_product_cache: Dict[str, tuple] = {}
+# ✅ الكاش مفتاحه بقى (shop_url, min_price, max_price) مش shop_url بس
+_product_cache: Dict[tuple, tuple] = {}
 _product_cache_lock = threading.Lock()
-_PRODUCT_CACHE_TTL  = 3600
+_PRODUCT_CACHE_TTL  = 600   # ✅ كان 3600 — 10 دقايق
 
-def find_cheapest_product(client: TLSClient, shop_url: str, 
-                          min_price: float = 0.01, 
-                          max_price: float = 20.0) -> Tuple[str, str, str, str]:
-    now = _time.time()
-    with _product_cache_lock:
-        cached = _product_cache.get(shop_url)
-        if cached and now - cached[-1] < _PRODUCT_CACHE_TTL:
-            return cached[:-1]
-
-    # ✅ زودنا limit عشان نجيب منتجات أكتر ونفلتر
-    resp = client.get(f"{shop_url}/products.json?sort_by=price-ascending&limit=250")
+def _fetch_products_page(client: TLSClient, shop_url: str, page: int = 1) -> list:
+    """جلب صفحة منتجات واحدة من products.json."""
+    resp = client.get(
+        f"{shop_url}/products.json?sort_by=price-ascending&limit=250&page={page}"
+    )
     if resp.status_code != 200:
         body = resp.text[:200].lower()
         if "cloudflare" in body or "1003" in body:
             raise Exception("cloudflare block")
         raise Exception(f"products.json returned {resp.status_code}")
     try:
-        products = resp.json().get("products", [])
+        return resp.json().get("products", [])
     except Exception:
         raise Exception("products.json invalid JSON")
 
-    # ✅ اجمع كل الـ variants المتاحة واختار الأرخص في الرينج
-    candidates = []
-    for p in products:
+
+def find_cheapest_product(client: TLSClient, shop_url: str,
+                          min_price: float = MIN_PRODUCT_PRICE,
+                          max_price: float = MAX_PRODUCT_PRICE) -> Tuple[str, str, str, str]:
+    now = _time.time()
+    cache_key = (shop_url, min_price, max_price)   # ✅ المفتاح الجديد
+    with _product_cache_lock:
+        cached = _product_cache.get(cache_key)
+        if cached and now - cached[-1] < _PRODUCT_CACHE_TTL:
+            return cached[:-1]
+
+    # ✅ اجمع من عدة صفحات (كل صفحة 250 منتج)
+    all_products: list = []
+    MAX_PRODUCT_PAGES = 4   # 4 × 250 = 1000 منتج — كفاية جدًا
+    for page in range(1, MAX_PRODUCT_PAGES + 1):
+        try:
+            products = _fetch_products_page(client, shop_url, page)
+        except Exception:
+            if all_products:
+                break
+            raise
+        if not products:
+            break
+        all_products.extend(products)
+        if len(products) < 250:
+            break
+
+    if not all_products:
+        raise Exception(f"products.json returned empty list at {shop_url}")
+
+    # ✅ فلتر كل الـ variants في الرينج واختار الأرخص
+    candidates: list = []
+    for p in all_products:
         for v in p.get("variants", []):
             if not v.get("available", False):
                 continue
@@ -357,17 +388,18 @@ def find_cheapest_product(client: TLSClient, shop_url: str,
             if price < min_price or price > max_price:
                 continue
             candidates.append((price, p, v))
-    
+
     if not candidates:
-        raise Exception(f"no available products between ${min_price:.2f}-${max_price:.2f} at {shop_url}")
-    
-    # اختار الأرخص
+        raise Exception(
+            f"no available products between ${min_price:.2f}-${max_price:.2f} at {shop_url}"
+        )
+
     candidates.sort(key=lambda x: x[0])
-    price, p, v = candidates[0]
-    
+    _price, p, v = candidates[0]
+
     result = (p.get("title",""), str(p.get("id","")), str(v.get("id","")), v.get("price",""))
     with _product_cache_lock:
-        _product_cache[shop_url] = result + (_time.time(),)
+        _product_cache[cache_key] = result + (_time.time(),)
     return result
 
 # ──────────────────────── Step 1: cart → checkout ────────────────────
@@ -513,11 +545,6 @@ def extract_identification_signature(checkout_html: str) -> str:
 
 def extract_pci_session_id(pci_body: str) -> str:
     match = re.search(r'"id"\s*:\s*"([^"]+)"', pci_body)
-    return match.group(1) if match else ""
-
-def extract_private_access_token_id(checkout_html: str) -> str:
-    unescaped = html.unescape(checkout_html)
-    match = re.search(r'"checkoutSessionIdentifier"\s*:\s*"([a-f0-9]+)"', unescaped)
     return match.group(1) if match else ""
 
 def extract_delivery_handle(proposal_body: str) -> str:
@@ -1438,7 +1465,9 @@ def run_check(client: TLSClient, shop_url: str, site_name: str,
     try:
         # ── Step 0: cheapest product ──────────────────────────────────
         try:
-            title, product_id, variant_id, price = find_cheapest_product(client, shop_url)
+            title, product_id, variant_id, price = find_cheapest_product(
+                client, shop_url, MIN_PRODUCT_PRICE, MAX_PRODUCT_PRICE   # ✅
+            )
             pass  # removed print
         except Exception as e:
             result.retryable = True
@@ -1826,7 +1855,9 @@ def run_checkout_for_card(shop_url: str, card_entry: str, proxy_url: str = "") -
     try:
         # Step 0 - Find cheapest product
         try:
-            title, product_id, variant_id, price = find_cheapest_product(client, shop_url)
+            title, product_id, variant_id, price = find_cheapest_product(
+                client, shop_url, MIN_PRODUCT_PRICE, MAX_PRODUCT_PRICE   # ✅
+            )
             pass  # removed print
             _ = title, product_id
         except Exception as e:
