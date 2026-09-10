@@ -192,10 +192,9 @@ _stats = {
     "approved": 0,
     "declined": 0,
     "errors":   0,
-    "by":       "3ltz",
+    "by":       "VeNoM",
     "started":  time.strftime("%Y-%m-%d %H:%M:%S"),
 }
-
 
 
 def _is_memory_exceeded() -> bool:
@@ -233,18 +232,18 @@ async def _save_dump(card: str, site: str, status: str, result: str, amount: str
 async def _lifespan(app: FastAPI):
     yield
 
-app = FastAPI(title="3ltz", docs_url=None, redoc_url=None, lifespan=_lifespan)
+app = FastAPI(title="VeNoM", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
-@app.get("/venoms")
+@app.get("/VeNoMs")
 async def route_status():
     return JSONResponse({
-        "ok": True, "api": "3ltz",
+        "ok": True, "api": "VeNoM",
         **_stats
     })
 
 
-@app.api_route("/venom", methods=["GET", "POST"])
+@app.api_route("/VeNoM", methods=["GET", "POST"])
 async def route_check(
     request: Request,
     cc:    Optional[str] = Query(None),
@@ -286,7 +285,7 @@ async def route_check(
             "Status":  "SiteError",
             "Response": "Timeout",
             "Price":   "-",
-            "Gateway": "3ltz",
+            "Gateway": "VeNoM",
             "Card":    cc,
             "site":    site,
             "elapsed": round(time.monotonic() - t0, 2),
@@ -299,7 +298,7 @@ async def route_check(
             "Status":  "SiteError",
             "Response": str(e)[:150],
             "Price":   "-",
-            "Gateway": "3ltz",
+            "Gateway": "VeNoM",
             "Card":    cc,
             "site":    site,
             "elapsed": round(time.monotonic() - t0, 2),
@@ -332,7 +331,7 @@ async def route_check(
         "Status":  bot_status,
         "Response": _result_str,
         "Price":   result.get("amount", "-"),
-        "Gateway": "3ltz",
+        "Gateway": "VeNoM",
         "Card":    cc,
         "site":    site,
         "elapsed": elapsed,
@@ -346,14 +345,14 @@ if __name__ == "__main__":
     import multiprocessing
     # ✅ worker واحد لكل CPU — async يعالج كل التزامن داخلياً
     cpu_count = multiprocessing.cpu_count()
-    workers   = max(2, cpu_count)
+    workers   = max(1, cpu_count)
 
     print("━" * 50)
-    print("  3ltz Checker API — TURBO MODE")
+    print("  VeNoM Checker API — TURBO MODE")
     print(f"  Port         : {PORT}")
     print(f"  Workers      : {workers}  (1 per CPU)")
-    print(f"  Endpoint     : /venom")
-    print(f"  Status       : /venoms")
+    print(f"  Endpoint     : /VeNoM")
+    print(f"  Status       : /VeNoMs")
     print(f"  Timeout      : {REQUEST_TIMEOUT}s")
     print("━" * 50)
     print("━" * 50)
