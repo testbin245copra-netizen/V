@@ -130,7 +130,7 @@ async def _fetch_cheapest_page(client: AsyncTLSClient, shop_url: str) -> list:
     """جلب المنتج الأرخص مباشرة — طلب واحد فقط."""
     try:
         resp = await client.get(
-            f"{shop_url}/products.json?sort_by=price-ascending&limit=1"
+            f"{shop_url}/products.json?sort_by=price-ascending&limit=250"
         )
     except Exception as e:
         raise Exception(f"products.json connection error: {e}")
@@ -149,8 +149,7 @@ async def _fetch_cheapest_page(client: AsyncTLSClient, shop_url: str) -> list:
         raise Exception("products.json invalid JSON")
 
 
-def _best_entry(products: list, min_price: float) -> tuple | None:
-    """استخرج أرخص منتج متاح من قائمة منتجات."""
+def _best_entry(products: list, min_price: float, max_price: float = 20.0) -> tuple | None:
     best: tuple | None = None
     best_price = float("inf")
     for p in products:
@@ -161,7 +160,7 @@ def _best_entry(products: list, min_price: float) -> tuple | None:
                 price = float(v.get("price") or 0)
             except (ValueError, TypeError):
                 continue
-            if price < min_price:
+            if price < min_price or price > max_price:
                 continue
             if price < best_price:
                 best_price = price
@@ -180,7 +179,8 @@ _product_cache_lock = __import__("threading").Lock()
 _CACHE_TTL = 3600
 
 async def find_cheapest_product(client: AsyncTLSClient, shop_url: str,
-                                min_price: float = 0.50):
+                                min_price: float = 0.01,
+                                max_price: float = 20.0):
     import time as _t
     now = _t.time()
     with _product_cache_lock:
@@ -189,7 +189,7 @@ async def find_cheapest_product(client: AsyncTLSClient, shop_url: str,
             return cached[:-1]
 
     products = await _fetch_cheapest_page(client, shop_url)
-    best = _best_entry(products, min_price)
+    best = _best_entry(products, min_price, max_price)
     if best:
         with _product_cache_lock:
             _product_cache[shop_url] = best + (_t.time(),)
