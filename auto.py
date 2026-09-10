@@ -24,7 +24,7 @@ from curl_cffi.requests import Session, BrowserType
 
 SITE_TXT = Path(__file__).parent / "site.txt"
 WORKING_SITES_API = "https://apok-production.up.railway.app/sites/working"
-MAX_SITE_AMOUNT = 15.0
+MAX_SITE_AMOUNT = 20.0
 
 BROWSER_PROFILES = ["chrome124", "chrome120", "chrome116", "edge101", "safari15_5"]
 
@@ -208,11 +208,11 @@ def choose_affordable_site(api_url: str, max_amount: float) -> "WorkingSite":
     return random.choice(sites)
 
 def fetch_affordable_sites(api_url: str, max_amount: float) -> List["WorkingSite"]:
-    page_size = 100
+    page_size = 250          # ✅ زودنا من 100 لـ 250
     out: List[WorkingSite] = []
     seen: set = set()
     offset = 0
-    MAX_PAGES = 20
+    MAX_PAGES = 100          # ✅ زودنا من 20 لـ 100  → 250 * 100 = 25000 موقع
 
     for _ in range(MAX_PAGES):
         page_url = f"{api_url}?limit={page_size}&offset={offset}"
@@ -255,8 +255,6 @@ def fetch_affordable_sites(api_url: str, max_amount: float) -> List["WorkingSite
 
     if not out:
         raise Exception("no affordable sites found in API payload")
-
-    pass  # removed print
     return out
 
 def parse_dashboard_html_sites(html_body: str, max_amount: float) -> List["WorkingSite"]:
@@ -325,14 +323,17 @@ _product_cache: Dict[str, tuple] = {}
 _product_cache_lock = threading.Lock()
 _PRODUCT_CACHE_TTL  = 3600
 
-def find_cheapest_product(client: TLSClient, shop_url: str, min_price: float = 0.50) -> Tuple[str, str, str, str]:
+def find_cheapest_product(client: TLSClient, shop_url: str, 
+                          min_price: float = 0.01, 
+                          max_price: float = 20.0) -> Tuple[str, str, str, str]:
     now = _time.time()
     with _product_cache_lock:
         cached = _product_cache.get(shop_url)
         if cached and now - cached[-1] < _PRODUCT_CACHE_TTL:
             return cached[:-1]
 
-    resp = client.get(f"{shop_url}/products.json?sort_by=price-ascending&limit=1")
+    # ✅ زودنا limit عشان نجيب منتجات أكتر ونفلتر
+    resp = client.get(f"{shop_url}/products.json?sort_by=price-ascending&limit=250")
     if resp.status_code != 200:
         body = resp.text[:200].lower()
         if "cloudflare" in body or "1003" in body:
@@ -343,6 +344,8 @@ def find_cheapest_product(client: TLSClient, shop_url: str, min_price: float = 0
     except Exception:
         raise Exception("products.json invalid JSON")
 
+    # ✅ اجمع كل الـ variants المتاحة واختار الأرخص في الرينج
+    candidates = []
     for p in products:
         for v in p.get("variants", []):
             if not v.get("available", False):
@@ -351,14 +354,21 @@ def find_cheapest_product(client: TLSClient, shop_url: str, min_price: float = 0
                 price = float(v.get("price") or 0)
             except (ValueError, TypeError):
                 continue
-            if price < min_price:
+            if price < min_price or price > max_price:
                 continue
-            result = (p.get("title",""), str(p.get("id","")), str(v.get("id","")), v.get("price",""))
-            with _product_cache_lock:
-                _product_cache[shop_url] = result + (_time.time(),)
-            return result
-
-    raise Exception(f"no available products above ${min_price:.2f} at {shop_url}")
+            candidates.append((price, p, v))
+    
+    if not candidates:
+        raise Exception(f"no available products between ${min_price:.2f}-${max_price:.2f} at {shop_url}")
+    
+    # اختار الأرخص
+    candidates.sort(key=lambda x: x[0])
+    price, p, v = candidates[0]
+    
+    result = (p.get("title",""), str(p.get("id","")), str(v.get("id","")), v.get("price",""))
+    with _product_cache_lock:
+        _product_cache[shop_url] = result + (_time.time(),)
+    return result
 
 # ──────────────────────── Step 1: cart → checkout ────────────────────
 
