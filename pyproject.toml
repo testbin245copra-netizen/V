@@ -1,15 +1,33 @@
 [project]
 name = "shopify-checker"
 version = "1.0.0"
+description = "Shopify Checker API — async card checking"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi",
-    "uvicorn",
-    "curl_cffi",
-    "psutil",
-    "httpx",
-    "aiohttp",
-    "asyncio",
-    "python-multipart",
-    "uvloop"
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "uvloop>=0.19.0",
+    "httptools>=0.6.1",
+    "curl-cffi>=0.7.0",
+    "psutil>=5.9.0",
+    "pydantic>=2.6.0",
+    "python-multipart>=0.0.9",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.3.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["auto", "auto_async", "config", "main"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
