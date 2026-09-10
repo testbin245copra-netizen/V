@@ -1,1 +1,1 @@
-web: python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8002}
+web: uvicorn main:app --host 0.0.0.0 --port $PORT --loop uvloop --workers 4
