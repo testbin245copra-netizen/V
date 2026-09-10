@@ -68,6 +68,10 @@ check_submit_errors = _auto.check_submit_errors
 generate_attempt_token = _auto.generate_attempt_token
 generate_page_id = _auto.generate_page_id
 
+# ✅ ثوابت السعر الجديدة من auto.py
+MIN_PRODUCT_PRICE = _auto.MIN_PRODUCT_PRICE
+MAX_PRODUCT_PRICE = _auto.MAX_PRODUCT_PRICE
+
 
 # ── Async TLS client ──────────────────────────────────────────────────
 
@@ -126,11 +130,11 @@ class AsyncTLSClient:
 
 # ── Step 0: cheapest product ──────────────────────────────────────────
 
-async def _fetch_cheapest_page(client: AsyncTLSClient, shop_url: str) -> list:
-    """جلب المنتج الأرخص مباشرة — طلب واحد فقط."""
+async def _fetch_products_page(client: AsyncTLSClient, shop_url: str, page: int = 1) -> list:
+    """جلب صفحة منتجات واحدة — limit=250 (الحد الأقصى لـ Shopify)."""
     try:
         resp = await client.get(
-            f"{shop_url}/products.json?sort_by=price-ascending&limit=250"
+            f"{shop_url}/products.json?sort_by=price-ascending&limit=250&page={page}"
         )
     except Exception as e:
         raise Exception(f"products.json connection error: {e}")
@@ -149,7 +153,9 @@ async def _fetch_cheapest_page(client: AsyncTLSClient, shop_url: str) -> list:
         raise Exception("products.json invalid JSON")
 
 
-def _best_entry(products: list, min_price: float, max_price: float = 20.0) -> tuple | None:
+def _best_entry(products: list, min_price: float,
+                max_price: float = MAX_PRODUCT_PRICE) -> tuple | None:
+    """استخرج أرخص منتج متاح جوه الرينج [min_price, max_price]."""
     best: tuple | None = None
     best_price = float("inf")
     for p in products:
@@ -160,6 +166,7 @@ def _best_entry(products: list, min_price: float, max_price: float = 20.0) -> tu
                 price = float(v.get("price") or 0)
             except (ValueError, TypeError):
                 continue
+            # ✅ الحد الأدنى والأقصى
             if price < min_price or price > max_price:
                 continue
             if price < best_price:
@@ -174,27 +181,52 @@ def _best_entry(products: list, min_price: float, max_price: float = 20.0) -> tu
     return best
 
 
+# ✅ الكاش مفتاحه (shop_url, min_price, max_price) — مش shop_url بس
 _product_cache: dict = {}
 _product_cache_lock = __import__("threading").Lock()
-_CACHE_TTL = 3600
+_CACHE_TTL = 600   # ✅ كان 3600 — 10 دقايق
+
 
 async def find_cheapest_product(client: AsyncTLSClient, shop_url: str,
-                                min_price: float = 0.01,
-                                max_price: float = 20.0):
+                                min_price: float = MIN_PRODUCT_PRICE,
+                                max_price: float = MAX_PRODUCT_PRICE):
     import time as _t
     now = _t.time()
+    cache_key = (shop_url, min_price, max_price)   # ✅ المفتاح الجديد
+
     with _product_cache_lock:
-        cached = _product_cache.get(shop_url)
+        cached = _product_cache.get(cache_key)
         if cached and now - cached[-1] < _CACHE_TTL:
             return cached[:-1]
 
-    products = await _fetch_cheapest_page(client, shop_url)
-    best = _best_entry(products, min_price, max_price)
+    # ✅ اجمع من عدة صفحات (كل صفحة 250 منتج)
+    all_products: list = []
+    MAX_PRODUCT_PAGES = 4   # 4 × 250 = 1000 منتج
+    for page in range(1, MAX_PRODUCT_PAGES + 1):
+        try:
+            products = await _fetch_products_page(client, shop_url, page)
+        except Exception:
+            if all_products:
+                break
+            raise
+        if not products:
+            break
+        all_products.extend(products)
+        if len(products) < 250:
+            break
+
+    if not all_products:
+        raise Exception(f"products.json returned empty list at {shop_url}")
+
+    best = _best_entry(all_products, min_price, max_price)
     if best:
         with _product_cache_lock:
-            _product_cache[shop_url] = best + (_t.time(),)
+            _product_cache[cache_key] = best + (_t.time(),)
         return best
-    raise Exception(f"no available products above ${min_price:.2f} at {shop_url}")
+
+    raise Exception(
+        f"no available products between ${min_price:.2f}-${max_price:.2f} at {shop_url}"
+    )
 
 
 # ── Step 1: cart → checkout ───────────────────────────────────────────
@@ -899,7 +931,9 @@ async def run_checkout_for_card_async(shop_url: str, card_entry: str,
     try:
         # Step 0
         try:
-            title, product_id, product_handle, variant_id, price = await find_cheapest_product(client, shop_url)
+            title, product_id, product_handle, variant_id, price = await find_cheapest_product(
+                client, shop_url, MIN_PRODUCT_PRICE, MAX_PRODUCT_PRICE   # ✅
+            )
             _ = title
         except Exception as e:
             result.status = CheckStatus.ERROR
